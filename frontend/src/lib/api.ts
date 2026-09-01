@@ -79,8 +79,9 @@ import type {
 } from '@/types'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
 })
+
 
 // Storage key for the currently-selected workspace ID. Lives in
 // localStorage so reloads + new tabs stay on the same workspace until
