@@ -1,0 +1,14 @@
+[build]
+  base = "frontend"
+  publish = "frontend/dist"
+  command = "npm run build"
+
+[build.environment]
+  NETLIFY_SKIP_MISE = "1"
+  NODE_VERSION = "22"
+
+# SPA Fallback Redirect for React Router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
