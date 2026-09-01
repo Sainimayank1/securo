@@ -8,9 +8,17 @@
   NETLIFY_SKIP_MISE = "true"
   NODE_VERSION = "22"
 
+# Proxy API requests to Render backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://backend-zltm.onrender.com/api/:splat"
+  status = 200
+  force = true
+
 # SPA Fallback Redirect for React Router
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
 
