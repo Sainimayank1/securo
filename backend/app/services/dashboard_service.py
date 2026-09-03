@@ -7,6 +7,7 @@ from sqlalchemy import select, func, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.account_types import balance_sign
 from app.core.config import get_settings
 from app.models.account import Account
 from app.models.bank_connection import BankConnection
@@ -1247,9 +1248,7 @@ async def _account_balance_at(
     balance_cutoff = min(cutoff, today)
     if account.connection_id:
         # Start from the provider's authoritative current balance
-        current_bal = float(account.balance)
-        if account.type == "credit_card":
-            current_bal = -current_bal
+        current_bal = float(account.balance) * balance_sign(account)
 
         # The provider number is the source of truth for the current balance,
         # including whatever pending entries the provider happens to include.
@@ -1391,9 +1390,7 @@ async def _total_balance_by_currency(
     totals: dict[str, float] = {}
     for account in accounts:
         if account.connection_id:
-            bal = float(account.balance)
-            if account.type == "credit_card":
-                bal = -bal
+            bal = float(account.balance) * balance_sign(account)
             if cutoff < today:
                 bal -= connected_deltas.get(account.id, 0.0)
                 if not include_pending:

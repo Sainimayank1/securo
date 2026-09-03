@@ -1,22 +1,25 @@
 import { useState, type ElementType } from 'react'
-import { Building2, PiggyBank, CreditCard, TrendingUp, Wallet } from 'lucide-react'
+import { Building2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ACCOUNT_TYPES, getAccountTypeSpec } from '@/lib/account-types'
 
 // Account-type → icon/color, the fallback shown when an account has no bank
 // logo (manual accounts, and connected accounts whose provider exposes none).
+// Derived from the registry in @/lib/account-types so a new type only has to be
+// declared once; `label` is kept as the key name for the existing callers.
 export const ACCOUNT_TYPE_CONFIG: Record<
   string,
   { icon: ElementType; color: string; bg: string; label: string }
-> = {
-  checking:    { icon: Building2,   color: 'text-indigo-600',  bg: 'bg-indigo-100',  label: 'accounts.typeChecking' },
-  savings:     { icon: PiggyBank,   color: 'text-emerald-600', bg: 'bg-emerald-100', label: 'accounts.typeSavings' },
-  credit_card: { icon: CreditCard,  color: 'text-violet-600',  bg: 'bg-violet-100',  label: 'accounts.typeCreditCard' },
-  investment:  { icon: TrendingUp,  color: 'text-amber-600',   bg: 'bg-amber-100',   label: 'accounts.typeInvestment' },
-  wallet:      { icon: Wallet,      color: 'text-rose-600',    bg: 'bg-rose-100',    label: 'accounts.typeWallet' },
-}
+> = Object.fromEntries(
+  ACCOUNT_TYPES.map((s) => [
+    s.key,
+    { icon: s.icon, color: s.color, bg: s.bg, label: s.labelKey },
+  ]),
+)
 
 export function getAccountTypeConfig(type: string) {
-  return ACCOUNT_TYPE_CONFIG[type] ?? ACCOUNT_TYPE_CONFIG['checking']
+  const s = getAccountTypeSpec(type)
+  return { icon: s.icon, color: s.color, bg: s.bg, label: s.labelKey }
 }
 
 const SIZES = {

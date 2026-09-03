@@ -46,6 +46,7 @@ import type { AttachmentPreview } from '@/components/transaction-attachments'
 import { TransactionSplitsSection } from '@/components/transaction-splits-section'
 import { buildInstallmentSeriesInput, hasNonStatusChange, isManualInstallmentSeriesRow } from '@/lib/installment-series'
 import { usePrivacyMode } from '@/hooks/use-privacy-mode'
+import { hasBillingCycle } from '@/lib/account-types'
 import type { Transaction, RecurringTransaction, TransactionSplitsInput, TransactionEditPayload, InstallmentSeriesInput, TransactionApplyScope, CategoryGroup, Category, Rule, RuleCondition } from '@/types'
 import { toast } from 'sonner'
 
@@ -748,7 +749,7 @@ function TransactionForm({
         // correct the bucketing on either; null clears the override back to
         // auto bucketing).
         const selectedAcc = accounts.find(a => a.id === accountId)
-        const isCcSelected = selectedAcc?.type === 'credit_card'
+        const isCcSelected = hasBillingCycle(selectedAcc?.type)
         const overridePayload: Partial<Transaction> = isCcSelected
           ? { effective_bill_date: effectiveBillDate || null }
           : {}
@@ -1151,7 +1152,7 @@ function TransactionForm({
           whose due_date matches. */}
       {(() => {
         const selectedAcc = accounts.find(a => a.id === accountId)
-        if (selectedAcc?.type !== 'credit_card') return null
+        if (!hasBillingCycle(selectedAcc?.type)) return null
         return (
           <div className="space-y-2">
             <Label>

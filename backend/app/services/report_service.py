@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import String, select, desc, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.account_types import has_billing_cycle, is_liability
 from app.core.config import get_settings
 from app.models.account import Account
 from app.models.asset import Asset
@@ -45,6 +46,7 @@ _ACCOUNT_TYPE_COLORS: dict[str, str] = {
     "checking": "#6366F1",
     "savings": "#3B82F6",
     "credit_card": "#F43F5E",
+    "loan": "#E11D48",
     "investment": "#8B5CF6",
     "wallet": "#F59E0B",
 }
@@ -137,7 +139,10 @@ async def _net_worth_at(
             session, Decimal(str(abs(bal))), account.currency, primary_currency, cutoff
         )
         converted_val = float(converted)
-        if account.type == "credit_card" or bal < 0:
+        # Liability types are debt whatever their balance reads; every other
+        # account is judged by its sign, so an overdrawn checking account still
+        # lands under liabilities.
+        if is_liability(account) or bal < 0:
             liabilities_total += converted_val
             if converted_val > 0:
                 composition.append(ReportCompositionItem(
@@ -1406,7 +1411,7 @@ async def get_cash_flow_report(
         for tx in pending_forecast:
             if tx.status != "posted" or not _counts_as_user_pnl_row(tx):
                 continue
-            if not tx.account or tx.account.type != "credit_card" or tx.date > today:
+            if not tx.account or not has_billing_cycle(tx.account) or tx.date > today:
                 continue
             flow_date = tx.effective_bill_date or tx.effective_date
             if flow_date <= today or flow_date > end:

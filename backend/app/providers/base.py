@@ -57,7 +57,10 @@ def mask_last4(value: Optional[str]) -> Optional[str]:
 class AccountData:
     external_id: str
     name: str
-    type: str  # checking, savings, credit_card
+    # One of app.core.account_types.ACCOUNT_TYPE_KEYS. Provider mappers should
+    # emit a registered key; an unknown one still stores and renders, but gets
+    # the plain asset-shaped defaults rather than the type's real behavior.
+    type: str
     balance: Decimal
     currency: str
     credit_limit: Optional[Decimal] = None

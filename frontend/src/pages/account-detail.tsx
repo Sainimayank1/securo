@@ -32,6 +32,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useWorkspace } from '@/contexts/workspace-context'
 import { resolveDateFnsLocale } from '@/lib/date-fns-locale'
 import { formatCurrency } from '@/lib/format'
+import { hasBillingCycle, isLiabilityType } from '@/lib/account-types'
 import {
   AreaChart,
   Area,
@@ -318,7 +319,7 @@ export default function AccountDetailPage() {
         return
       }
     }
-    if (account?.type === 'credit_card' && account?.statement_close_day) {
+    if (hasBillingCycle(account?.type) && account?.statement_close_day) {
       const ref = direction === -1
         ? new Date(parseISO(filterFrom + 'T00:00:00').getTime() - 86400000)
         : new Date(parseISO(filterTo + 'T00:00:00').getTime() + 86400000)
@@ -344,7 +345,7 @@ export default function AccountDetailPage() {
   const { data: bills } = useQuery({
     queryKey: ['accounts', id, 'bills'],
     queryFn: () => accounts.bills(id!, 24),
-    enabled: !!id && account?.type === 'credit_card',
+    enabled: !!id && hasBillingCycle(account?.type),
   })
   // Bills sorted oldest → newest, for indexing helpers below.
   const billsAsc = useMemo(() => {
@@ -366,7 +367,7 @@ export default function AccountDetailPage() {
 
   useEffect(() => {
     if (!account || filterTouched.current) return
-    if (account.type === 'credit_card') {
+    if (hasBillingCycle(account.type)) {
       // Default landing matches the existing UX: the bill the user is
       // about to pay (next due). With a bills feed we can prefer an
       // upcoming bank-reported bill; if today is past the newest bill,
@@ -432,7 +433,7 @@ export default function AccountDetailPage() {
   // Previous cycle (for the Total da fatura comparison subtitle).
   // Only fires for credit cards with a statement_close_day set.
   const previousCycle = useMemo(() => {
-    if (!account || account.type !== 'credit_card' || !account.statement_close_day) return null
+    if (!account || !hasBillingCycle(account.type) || !account.statement_close_day) return null
     const dayBeforeStart = new Date(parseISO(filterFrom + 'T00:00:00').getTime() - 86400000)
     return creditCardCycleBoundaries(account.statement_close_day, dayBeforeStart)
   }, [account, filterFrom])
@@ -450,7 +451,7 @@ export default function AccountDetailPage() {
   // even when the close day shifts month to month (issue #92). Otherwise we
   // fall back to local cycle math.
   const timelineCycles: { start: string; end: string; bill?: CreditCardBill }[] = useMemo(() => {
-    if (!account || account.type !== 'credit_card') return []
+    if (!account || !hasBillingCycle(account.type)) return []
 
     if (billsAsc.length > 0) {
       const cycles: { start: string; end: string; bill?: CreditCardBill }[] = []
@@ -530,7 +531,7 @@ export default function AccountDetailPage() {
   const { data: projectedTxData } = useQuery({
     queryKey: ['dashboard', 'projected-transactions', { account_id: id, from: filterFrom, to: filterTo }],
     queryFn: () => dashboard.projectedTransactions({ account_id: id!, from: filterFrom, to: filterTo }),
-    enabled: !!id && account?.type !== 'credit_card',
+    enabled: !!id && !hasBillingCycle(account?.type),
   })
 
   const { data: categoriesList } = useQuery({
@@ -625,7 +626,7 @@ export default function AccountDetailPage() {
   })
 
   // Whether to use primary currency amounts (for foreign-currency accounts with toggle, or domestic accounts with foreign txs)
-  const isCreditCard = account?.type === 'credit_card'
+  const isCreditCard = hasBillingCycle(account?.type)
   const isForeignCurrency = account ? account.currency !== userCurrency : false
   const usePrimary = !isForeignCurrency || showPrimary
   const displayCurrency = (isForeignCurrency && !showPrimary) ? (account?.currency || userCurrency) : userCurrency
@@ -818,7 +819,7 @@ export default function AccountDetailPage() {
   const hasProjectedIncome = Math.abs(projectedIncome - actualIncome) > 0.005
   const hasProjectedExpenses = Math.abs(projectedExpenses - actualExpenses) > 0.005
 
-  const resolvedDefaultRange = account?.type === 'credit_card'
+  const resolvedDefaultRange = account && hasBillingCycle(account.type)
     ? defaultCycleForCreditCard(account.statement_close_day, account.payment_due_day, new Date())
     : { start: defaultFrom(), end: defaultTo() }
   const hasFilters = filterFrom !== resolvedDefaultRange.start || filterTo !== resolvedDefaultRange.end
@@ -1012,7 +1013,7 @@ export default function AccountDetailPage() {
               className="text-muted-foreground hover:text-foreground min-h-[44px] min-w-[44px] px-3 shrink-0"
               onClick={() => {
                 filterTouched.current = false
-                if (account?.type === 'credit_card') {
+                if (hasBillingCycle(account?.type)) {
                   const { start, end } = defaultCycleForCreditCard(
                     account.statement_close_day,
                     account.payment_due_day,
@@ -1695,7 +1696,7 @@ export default function AccountDetailPage() {
                             </span>
                           )}
                         </td>
-                        <td className={`px-4 py-3 text-right tabular-nums text-sm hidden sm:table-cell whitespace-nowrap ${(account.type === 'credit_card' ? tx.runningBalance > 0 : tx.runningBalance < 0) ? 'text-rose-500' : 'text-muted-foreground'}`}>
+                        <td className={`px-4 py-3 text-right tabular-nums text-sm hidden sm:table-cell whitespace-nowrap ${(isLiabilityType(account.type) ? tx.runningBalance > 0 : tx.runningBalance < 0) ? 'text-rose-500' : 'text-muted-foreground'}`}>
                           {mask(formatCurrency(tx.runningBalance, displayCurrency, locale))}
                         </td>
                       </tr>

@@ -19,13 +19,7 @@ import { ImportReviewTable } from '@/components/import-review-table'
 import { ImportHistory } from '@/components/import-history'
 import { useAuth } from '@/contexts/auth-context'
 import { useWorkspace } from '@/contexts/workspace-context'
-
-const TYPE_LABELS: Record<string, string> = {
-  checking: 'accounts.typeChecking',
-  savings: 'accounts.typeSavings',
-  credit_card: 'accounts.typeCreditCard',
-  investment: 'accounts.typeInvestment',
-}
+import { ACCOUNT_TYPE_LABEL_KEYS } from '@/lib/account-types'
 
 // Securo fields a CSV column can be mapped to, in display order.
 const CSV_MAPPING_FIELDS = [
@@ -380,7 +374,7 @@ function TransactionImportPanel() {
               >
                 <option value="">{t('import.selectAccount')}</option>
                 {sortAccountsByDisplayName(accountsList ?? []).map((acc) => (
-                  <option key={acc.id} value={acc.id}>{getAccountName(acc)} ({t(TYPE_LABELS[acc.type] || acc.type)})</option>
+                  <option key={acc.id} value={acc.id}>{getAccountName(acc)} ({t(ACCOUNT_TYPE_LABEL_KEYS[acc.type] || acc.type)})</option>
                 ))}
               </select>
               {!selectedAccount && (

@@ -8,6 +8,7 @@ from sqlalchemy import CursorResult, delete, select, func, or_, not_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.account_types import has_billing_cycle
 from app.models.transaction import Transaction
 from app.models.transaction_attachment import TransactionAttachment
 from app.models.account import Account
@@ -1261,7 +1262,7 @@ async def _resync_bill_link_from_override(
       `creditCardMetadata.billId` in raw_data, if recoverable; else null.
     """
     from app.models.credit_card_bill import CreditCardBill  # local: avoid circular
-    if account is None or account.type != "credit_card":
+    if account is None or not has_billing_cycle(account):
         return
     override = transaction.effective_bill_date
     if override is not None:

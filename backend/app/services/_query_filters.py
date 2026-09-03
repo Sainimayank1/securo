@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.account_types import PENDING_IN_BALANCE_TYPES
 from app.models.account import Account
 from app.models.category import Category
 from app.models.transaction import Transaction
@@ -62,10 +63,14 @@ def counts_in_current_balance(as_of: date):
     a credit card's balance is the debt owed, and an authorized purchase is
     already owed, so pending card rows stay in. Without that carve-out the
     card's balance understates the debt while its own bill total includes it.
+
+    Which types get that carve-out is the `counts_pending_in_balance` trait —
+    a card does, a loan does not, since a loan's balance moves only when a
+    payment actually settles. See app.core.account_types.
     """
     return and_(
         is_not_future(as_of),
-        or_(is_confirmed(), Account.type == "credit_card"),
+        or_(is_confirmed(), Account.type.in_(PENDING_IN_BALANCE_TYPES)),
     )
 
 

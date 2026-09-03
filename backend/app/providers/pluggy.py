@@ -21,6 +21,7 @@ from app.providers.base import (
     mask_last4,
 )
 from app.providers.pluggy_constants import pluggy_icon_for_compe
+from app.core.account_types import has_billing_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ def _build_account_data(acc: dict, type_mapper) -> AccountData:
     card_brand: Optional[str] = None
     card_level: Optional[str] = None
 
-    if account_type == "credit_card" and credit_data:
+    if has_billing_cycle(account_type) and credit_data:
         raw_limit = credit_data.get("creditLimit")
         if raw_limit is not None:
             credit_limit = Decimal(str(raw_limit))

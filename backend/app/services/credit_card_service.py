@@ -3,6 +3,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+from app.core.account_types import has_billing_cycle
+
 
 def _clamp_day(year: int, month: int, day: int) -> date:
     last_day = calendar.monthrange(year, month)[1]
@@ -77,7 +79,9 @@ def apply_effective_date(transaction, account, *, bill_due_date: Optional[date] 
        sync layer when a bill is linked).
     3. Cycle math from `account.statement_close_day` / `payment_due_day`.
 
-    For non-CC accounts, effective_date is always equal to `date`.
+    For accounts without a statement cycle, effective_date always equals
+    `date` — a loan payment lands on the day it is made, since nothing accrues
+    to a statement in between.
 
     Call this from every tx create/update path (manual, sync, import,
     transfers, opening balances). `effective_date` is stored on every row
@@ -87,7 +91,7 @@ def apply_effective_date(transaction, account, *, bill_due_date: Optional[date] 
     if override is not None:
         transaction.effective_date = override
         return
-    if account is not None and getattr(account, "type", None) == "credit_card":
+    if account is not None and has_billing_cycle(account):
         if bill_due_date is not None:
             transaction.effective_date = bill_due_date
         else:

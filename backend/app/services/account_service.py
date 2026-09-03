@@ -7,6 +7,15 @@ from sqlalchemy import case, delete, func, select, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
+from app.core.account_types import (
+    ALL_METADATA_FIELDS,
+    balance_sign,
+    clear_unowned_metadata,
+    counts_pending_in_balance,
+    has_billing_cycle,
+    is_liability,
+    metadata_fields,
+)
 from app.models.account import Account
 from app.models.bank_connection import BankConnection
 from app.models.credit_card_bill import CreditCardBill
@@ -31,21 +40,25 @@ def get_account_name(account: Account) -> str:
 def _simplefin_to_internal_balance(provider: str, account_type: str, balance: Decimal) -> Decimal:
     """Normalize a SimpleFIN balance to Securo's positive-for-debt convention.
 
-    SimpleFIN reports a credit card's balance as negative debt and exposes no
-    account type, so the provider stores it raw and labels every account
-    "checking". Pluggy/Enable report card debt as a positive number, which is
-    the convention every downstream site (serialize_account, _account_balance_at,
-    sync_opening_balance_for_connected_account, ...) assumes. Flip SimpleFIN card
-    balances to match so those sites stay provider-agnostic.
+    SimpleFIN reports a debt balance as negative and exposes no account type, so
+    the provider stores it raw and labels every account "checking". Pluggy/Enable
+    report debt as a positive number, which is the convention every downstream
+    site (serialize_account, _account_balance_at,
+    sync_opening_balance_for_connected_account, ...) assumes. Flip SimpleFIN
+    liability balances to match so those sites stay provider-agnostic.
+
+    Keyed on the liability trait rather than on `credit_card` specifically: the
+    normalization is about which direction debt points, and every liability type
+    answers that the same way.
     """
-    if provider == "simplefin" and account_type == "credit_card":
+    if provider == "simplefin" and is_liability(account_type):
         return -balance
     return balance
 
 
 def _opening_balance_values(account_type: str, balance: Decimal) -> tuple[Decimal, str]:
     amount = abs(balance)
-    is_credit = (balance > 0) == (account_type != "credit_card")
+    is_credit = (balance > 0) == (not is_liability(account_type))
     return amount, "credit" if is_credit else "debit"
 
 
@@ -162,10 +175,10 @@ def serialize_account(
     previous_balance: Optional[Decimal],
     connection: Optional[BankConnection] = None,
 ) -> dict:
-    # Connected CC: provider stores positive for debt → negate.
+    # Connected liability: provider stores positive for debt → negate.
     # Manual accounts: transaction math already gives correct sign.
     if acc.connection_id:
-        resolved_balance = float(acc.balance) * (-1 if acc.type == "credit_card" else 1)
+        resolved_balance = float(acc.balance) * balance_sign(acc)
     else:
         resolved_balance = float(current_balance or 0)
 
@@ -198,7 +211,7 @@ def serialize_account(
         "next_due_date": None,
     }
 
-    if acc.type == "credit_card":
+    if has_billing_cycle(acc):
         available = compute_available_credit(acc.credit_limit, Decimal(str(resolved_balance)))
         payload["available_credit"] = float(available) if available is not None else None
         cycle = get_cycle_dates(acc.statement_close_day, acc.payment_due_day)
@@ -225,7 +238,7 @@ async def get_credit_card_bills(
     account = await get_account(session, account_id, workspace_id)
     if account is None:
         return None
-    if account.type != "credit_card":
+    if not has_billing_cycle(account):
         return []
     result = await session.execute(
         select(CreditCardBill)
@@ -258,7 +271,6 @@ async def create_account(
     user_id: uuid.UUID,
     data: AccountCreate,
 ) -> Account:
-    is_cc = data.type == "credit_card"
     account = Account(
         user_id=user_id,
         workspace_id=workspace_id,
@@ -266,13 +278,17 @@ async def create_account(
         type=data.type,
         balance=data.balance,
         currency=data.currency,
-        credit_limit=data.credit_limit if is_cc else None,
-        statement_close_day=data.statement_close_day if is_cc else None,
-        payment_due_day=data.payment_due_day if is_cc else None,
-        minimum_payment=data.minimum_payment if is_cc else None,
-        card_brand=data.card_brand if is_cc else None,
-        card_level=data.card_level if is_cc else None,
+        credit_limit=data.credit_limit,
+        statement_close_day=data.statement_close_day,
+        payment_due_day=data.payment_due_day,
+        minimum_payment=data.minimum_payment,
+        card_brand=data.card_brand,
+        card_level=data.card_level,
     )
+    # Drop whatever the payload sent that this type doesn't own. Written as a
+    # clear-after rather than a conditional per field so a type that gains its
+    # own columns later inherits the guard without editing this constructor.
+    clear_unowned_metadata(account)
     session.add(account)
     await session.flush()  # get account.id without committing
 
@@ -322,36 +338,33 @@ async def update_account(
     # account creation and never overwrites it afterwards, so the override
     # survives subsequent syncs without a separate field.
     if account.connection_id is not None:
-        editable_fields = {
-            "display_name",
-            "type",
-            "credit_limit",
-            "statement_close_day",
-            "payment_due_day",
-            "minimum_payment",
-            "card_brand",
-            "card_level",
-        }
+        editable_fields = {"display_name", "type"} | ALL_METADATA_FIELDS
         disallowed = set(update_data.keys()) - editable_fields
         if disallowed:
             raise ValueError("Cannot edit bank-connected accounts")
         old_type = account.type
         new_type = update_data.get("type", account.type)
-        cc_fields = editable_fields - {"display_name", "type"}
-        cc_update = {k: v for k, v in update_data.items() if k in cc_fields}
-        if cc_update and new_type != "credit_card":
+        # Type-owned columns may only be set on a type that owns them. Asking the
+        # registry rather than naming credit_card keeps this correct for the next
+        # type that brings columns of its own.
+        submitted_metadata = {k for k in update_data if k in ALL_METADATA_FIELDS}
+        if submitted_metadata - metadata_fields(new_type):
             raise ValueError("Credit card fields can only be set on credit card accounts")
         for key, value in update_data.items():
             setattr(account, key, value)
-        # SimpleFIN stores a card's balance with the raw provider sign (negative
+        # SimpleFIN stores a debt balance with the raw provider sign (negative
         # for debt) under type="checking". When the user flips the type across
-        # the credit_card boundary, the downstream display sites start (or stop)
+        # the *liability* boundary, the downstream display sites start (or stop)
         # applying the positive-for-debt negation, so the stored value must flip
-        # too — otherwise the card double-counts. Mirror the ingestion-time
+        # too — otherwise the account double-counts. Mirror the ingestion-time
         # normalization (_simplefin_to_internal_balance) here so the correction
         # is immediate, not deferred to the next sync. Load the provider via
         # session.get (identity-map hit, never a lazy-load that throws).
-        if old_type != new_type and "credit_card" in (old_type, new_type):
+        #
+        # The boundary is the trait, not the type: checking→loan flips just as
+        # checking→credit_card does, while credit_card→loan must NOT flip, since
+        # both already store debt the same way.
+        if is_liability(old_type) != is_liability(new_type):
             conn = (
                 await session.get(BankConnection, account.connection_id)
                 if account.connection_id is not None
@@ -359,15 +372,9 @@ async def update_account(
             )
             if conn is not None and conn.provider == "simplefin":
                 account.balance = -account.balance
-        # If the override moves the account away from credit_card, drop any
-        # stale card metadata so it isn't left half credit-card.
-        if new_type != "credit_card":
-            account.credit_limit = None
-            account.statement_close_day = None
-            account.payment_due_day = None
-            account.minimum_payment = None
-            account.card_brand = None
-            account.card_level = None
+        # If the override moves the account to a type that doesn't own the card
+        # columns, drop them so it isn't left half credit-card.
+        clear_unowned_metadata(account)
         if cycle_fields_changed:
             await _recompute_effective_dates(session, account)
         await session.commit()
@@ -377,13 +384,7 @@ async def update_account(
     for key, value in update_data.items():
         setattr(account, key, value)
 
-    if account.type != "credit_card":
-        account.credit_limit = None
-        account.statement_close_day = None
-        account.payment_due_day = None
-        account.minimum_payment = None
-        account.card_brand = None
-        account.card_level = None
+    clear_unowned_metadata(account)
 
     # When balance changes, sync the opening_balance transaction
     if "balance" in update_data:
@@ -476,13 +477,12 @@ async def sync_opening_balance_for_connected_account(
     # is not part of the provider's current balance yet.
     balance_cutoff = _Date.today()
 
-    # For connected CC accounts the stored balance is positive debt and the UI
-    # displays it negated (account_service.serialize_account). The sum of signed
-    # transaction amounts on a CC trends negative as debt accrues, so the target
-    # we want SUM(signed txs) to hit is -balance. For every other account type
-    # the target is simply the stored balance.
-    is_cc = account.type == "credit_card"
-    target = -account.balance if is_cc else account.balance
+    # For connected liability accounts the stored balance is positive debt and
+    # the UI displays it negated (account_service.serialize_account). The sum of
+    # signed transaction amounts on a liability trends negative as debt accrues,
+    # so the target we want SUM(signed txs) to hit is -balance. For every other
+    # account type the target is simply the stored balance.
+    target = account.balance * balance_sign(account)
 
     effective_amount = case(
         (Transaction.currency == account.currency, Transaction.amount),
@@ -710,7 +710,7 @@ async def get_account_summary(
                 # Same carve-out as the accounts list: a card's balance is the
                 # debt owed and an authorized purchase is already owed. The
                 # account is loaded here, so branch in Python rather than SQL.
-                *([] if account.type == "credit_card" else [is_confirmed()]),
+                *([] if counts_pending_in_balance(account) else [is_confirmed()]),
                 Transaction.is_ignored == False,
                 or_(
                     Transaction.category_id.is_(None),
@@ -722,9 +722,9 @@ async def get_account_summary(
         )
         current_balance = float(balance_result.scalar() or 0)
 
-    # Connected CC: provider balance is positive for debt → negate.
-    # Manual CC: transaction math already gives negative for debt.
-    if account.type == "credit_card" and account.connection_id:
+    # Connected liability: provider balance is positive for debt → negate.
+    # Manual liability: transaction math already gives negative for debt.
+    if account.connection_id and is_liability(account):
         current_balance = -current_balance
 
     # Bucketing date: for credit-card txs the user can override which cycle
@@ -803,7 +803,7 @@ async def get_account_summary(
     # reporting view. See `counts_on_bill` for why the bill cannot simply
     # reuse `counts_as_pnl`.
     summary_filter = (
-        counts_on_bill() if account.type == "credit_card" else counts_as_pnl()
+        counts_on_bill() if has_billing_cycle(account) else counts_as_pnl()
     )
 
     # Income = SUM of credit transactions in window (excluding opening_balance
@@ -825,7 +825,7 @@ async def get_account_summary(
     # cycle's "Total da fatura" matches the bank's bill (refunds reduce the
     # invoice amount). `summary_filter` already excludes paired transfers,
     # so bill payments are not double-counted.
-    if account.type == "credit_card":
+    if has_billing_cycle(account):
         signed_for_bill = case(
             (Transaction.type == "credit", -func.abs(effective_amount)),
             else_=func.abs(effective_amount),
@@ -871,7 +871,7 @@ async def get_account_summary(
     )
     forecast_income = float(forecast_income_result.scalar() or 0)
 
-    if account.type == "credit_card":
+    if has_billing_cycle(account):
         forecast_expense_result = await session.execute(
             _scope(select(func.coalesce(func.sum(signed_for_bill), 0)).where(
                 Transaction.account_id == account_id,
@@ -896,7 +896,7 @@ async def get_account_summary(
     # future-dated rows that occur before the visible window. The opening row
     # itself is included when it falls inside the window and applied by the
     # same walk as every other transaction.
-    if account.type != "credit_card" and date_from:
+    if not has_billing_cycle(account) and date_from:
         ob_base_filters = [
             Transaction.account_id == account_id,
             Transaction.is_ignored == False,
@@ -1082,7 +1082,7 @@ async def get_account_balance_history(
     if not date_to:
         date_to = today
 
-    sign = -1.0 if (account.type == "credit_card" and account.connection_id) else 1.0
+    sign = float(balance_sign(account)) if account.connection_id else 1.0
 
     series = await _account_daily_balance_series(session, account_id, date_from, date_to, account.currency)
 

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.account_types import clear_unowned_metadata, has_billing_cycle
 from app.core.config import get_settings
 from app.models.asset import Asset
 from app.models.asset_group import AssetGroup
@@ -1053,7 +1054,6 @@ async def handle_oauth_callback(
 
     institution_cache: dict[str, Institution] = {}
     for acc_data in connection_data.accounts:
-        is_cc = acc_data.type == "credit_card"
         institution = await _resolve_institution(
             session, connection.id, institution_cache, acc_data
         )
@@ -1067,14 +1067,17 @@ async def handle_oauth_callback(
             type=acc_data.type,
             balance=acc_data.balance,
             currency=acc_data.currency,
-            credit_limit=acc_data.credit_limit if is_cc else None,
-            statement_close_day=acc_data.statement_close_day if is_cc else None,
-            payment_due_day=acc_data.payment_due_day if is_cc else None,
-            minimum_payment=acc_data.minimum_payment if is_cc else None,
-            card_brand=acc_data.card_brand if is_cc else None,
-            card_level=acc_data.card_level if is_cc else None,
+            credit_limit=acc_data.credit_limit,
+            statement_close_day=acc_data.statement_close_day,
+            payment_due_day=acc_data.payment_due_day,
+            minimum_payment=acc_data.minimum_payment,
+            card_brand=acc_data.card_brand,
+            card_level=acc_data.card_level,
             institution_id=institution.id if institution else None,
         )
+        # Providers sometimes attach card metadata to accounts that aren't
+        # cards; the registry decides what this type is allowed to keep.
+        clear_unowned_metadata(account)
         session.add(account)
         await session.flush()
 
@@ -1567,7 +1570,7 @@ async def _sync_credit_card_bills(
     Pluggy connection 4xx'es here, a temporary API hiccup shouldn't fail
     the whole sync, and the cycle-math fallback already covers the gap.
     """
-    if account.type != "credit_card":
+    if not has_billing_cycle(account):
         return {}
 
     try:
@@ -1777,7 +1780,7 @@ async def sync_connection(
                 # Backfills existing accounts on next sync (issue #345).
                 if institution is not None:
                     account.institution_id = institution.id
-                if acc_data.type == "credit_card":
+                if has_billing_cycle(acc_data):
                     # Preserve existing CC metadata when the provider doesn't
                     # expose it. Pluggy's creditData fields (limit, close/due
                     # dates, minimum payment, brand/level) are intermittently
@@ -1798,7 +1801,6 @@ async def sync_connection(
                     if acc_data.card_level is not None:
                         account.card_level = acc_data.card_level
             else:
-                is_cc = acc_data.type == "credit_card"
                 account = Account(
                     user_id=user_id,
                     connection_id=connection.id,
@@ -1808,14 +1810,15 @@ async def sync_connection(
                     type=acc_data.type,
                     balance=acc_data.balance,
                     currency=acc_data.currency,
-                    credit_limit=acc_data.credit_limit if is_cc else None,
-                    statement_close_day=acc_data.statement_close_day if is_cc else None,
-                    payment_due_day=acc_data.payment_due_day if is_cc else None,
-                    minimum_payment=acc_data.minimum_payment if is_cc else None,
-                    card_brand=acc_data.card_brand if is_cc else None,
-                    card_level=acc_data.card_level if is_cc else None,
+                    credit_limit=acc_data.credit_limit,
+                    statement_close_day=acc_data.statement_close_day,
+                    payment_due_day=acc_data.payment_due_day,
+                    minimum_payment=acc_data.minimum_payment,
+                    card_brand=acc_data.card_brand,
+                    card_level=acc_data.card_level,
                     institution_id=institution.id if institution else None,
                 )
+                clear_unowned_metadata(account)
                 session.add(account)
                 await session.flush()
 

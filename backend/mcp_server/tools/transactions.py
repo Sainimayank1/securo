@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.account_types import ACCOUNT_TYPE_KEYS
 from app.models.group import GroupMember
 from app.services import transaction_service
 from mcp_server.auth import CallContext
@@ -40,7 +41,9 @@ from mcp_server.tools._helpers import num, parse_date, parse_uuid, parse_uuid_li
             "account_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "Filter to specific accounts (by id)"},
             "account_types": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["checking", "savings", "credit_card", "wallet", "investment", "loan", "other"]},
+                # Derived from the registry so the agent-facing contract can never
+                # advertise a type the API doesn't accept (or miss one it does).
+                "items": {"type": "string", "enum": list(ACCOUNT_TYPE_KEYS)},
                 "description": "Filter by account type — e.g. ['credit_card'] for 'all my credit-card transactions'",
             },
             "category_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "Filter to specific categories"},

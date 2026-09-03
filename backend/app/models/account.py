@@ -31,7 +31,11 @@ class Account(Base):
     # the provider exposes one. Provider-owned like `name`: refreshed on sync,
     # not user-editable. Never holds the full identifier.
     masked_number: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
-    type: Mapped[str] = mapped_column(String(50))  # checking, savings, credit_card
+    # One of app.core.account_types.ACCOUNT_TYPE_KEYS. Deliberately a plain
+    # string rather than a DB enum: the column predates the registry and older
+    # databases hold values this build may not know, so the registry degrades
+    # them instead of the database rejecting them.
+    type: Mapped[str] = mapped_column(String(50))
     balance: Mapped[Decimal] = mapped_column(Numeric(precision=15, scale=2), default=Decimal("0.00"))
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     balance_primary: Mapped[Optional[Decimal]] = mapped_column(Numeric(precision=15, scale=2), nullable=True)

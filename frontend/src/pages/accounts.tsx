@@ -26,6 +26,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { Account, BankConnection } from '@/types'
 import { RefreshCw, TriangleAlert, Unlink, Settings } from 'lucide-react'
 import { AccountIcon, ConnectionLogo, getAccountTypeConfig } from '@/components/account-icon'
+import {
+  ACCOUNT_TYPES,
+  DEFAULT_ACCOUNT_TYPE,
+  getAccountTypeSpec,
+  hasBillingCycle,
+  isLiabilityType,
+} from '@/lib/account-types'
 import { AccountPageActions } from '@/components/account-page-actions'
 import { AccountRowActions } from '@/components/account-row-actions'
 import { PageHeader } from '@/components/page-header'
@@ -38,17 +45,6 @@ import { usePrivacyMode } from '@/hooks/use-privacy-mode'
 import { useAuth } from '@/contexts/auth-context'
 import { useWorkspace } from '@/contexts/workspace-context'
 import { formatCurrency } from '@/lib/format'
-
-// Account types offered in the create/edit dialog. Shared between the manual
-// type selector and the connected-account override selector so the list stays
-// in one place.
-const ACCOUNT_TYPE_OPTIONS = [
-  { value: 'checking', labelKey: 'accounts.typeChecking' },
-  { value: 'savings', labelKey: 'accounts.typeSavings' },
-  { value: 'credit_card', labelKey: 'accounts.typeCreditCard' },
-  { value: 'investment', labelKey: 'accounts.typeInvestment' },
-  { value: 'wallet', labelKey: 'accounts.typeWallet' },
-] as const
 
 function daysUntil(dateStr: string | null): number | null {
   if (!dateStr) return null
@@ -251,7 +247,7 @@ export default function AccountsPage() {
                 {manualAccounts.map((acc) => {
                   const cfg = getAccountTypeConfig(acc.type)
                   const bal = Number(acc.current_balance)
-                  const isCC = acc.type === 'credit_card'
+                  const isCC = hasBillingCycle(acc.type)
                   const dueIn = isCC ? daysUntil(acc.next_due_date) : null
                   const dueText =
                     dueIn == null ? null
@@ -274,7 +270,7 @@ export default function AccountsPage() {
                         </div>
                       </Link>
                       <div className="shrink-0 text-right">
-                        <p className={`text-xs sm:text-sm font-semibold tabular-nums ${(acc.type === 'credit_card' ? bal > 0 : bal < 0) ? 'text-rose-500' : 'text-foreground'}`}>
+                        <p className={`text-xs sm:text-sm font-semibold tabular-nums ${(isLiabilityType(acc.type) ? bal > 0 : bal < 0) ? 'text-rose-500' : 'text-foreground'}`}>
                           {mask(formatCurrency(bal, acc.currency, locale))}
                         </p>
                         {isCC && acc.available_credit != null ? (
@@ -398,7 +394,7 @@ export default function AccountsPage() {
                         {connAccounts.map((acc) => {
                           const cfg = getAccountTypeConfig(acc.type)
                           const bal = Number(acc.current_balance)
-                          const isCC = acc.type === 'credit_card'
+                          const isCC = hasBillingCycle(acc.type)
                           const dueIn = isCC ? daysUntil(acc.next_due_date) : null
                           const dueText =
                             dueIn == null ? null
@@ -421,7 +417,7 @@ export default function AccountsPage() {
                                 </div>
                               </Link>
                               <div className="shrink-0 text-right">
-                                <p className={`text-xs sm:text-sm font-semibold tabular-nums ${(acc.type === 'credit_card' ? bal > 0 : bal < 0) ? 'text-rose-500' : 'text-foreground'}`}>
+                                <p className={`text-xs sm:text-sm font-semibold tabular-nums ${(isLiabilityType(acc.type) ? bal > 0 : bal < 0) ? 'text-rose-500' : 'text-foreground'}`}>
                                   {mask(formatCurrency(bal, acc.currency, locale))}
                                 </p>
                                 {isCC && acc.available_credit != null ? (
@@ -685,7 +681,7 @@ function AccountDialog({
   })
   const [name, setName] = useState(account?.name ?? '')
   const [displayName, setDisplayName] = useState(account?.display_name ?? '')
-  const [type, setType] = useState(account?.type ?? 'checking')
+  const [type, setType] = useState(account?.type ?? DEFAULT_ACCOUNT_TYPE)
   const [balance, setBalance] = useState(account?.balance?.toString() ?? '0')
   const [currency, setCurrency] = useState(account?.currency ?? userCurrency)
   const [balanceDate, setBalanceDate] = useState(localDateString)
@@ -696,7 +692,7 @@ function AccountDialog({
   useEffect(() => {
     setName(account?.name ?? '')
     setDisplayName(account?.display_name ?? '')
-    setType(account?.type ?? 'checking')
+    setType(account?.type ?? DEFAULT_ACCOUNT_TYPE)
     setBalance(account?.balance?.toString() ?? '0')
     setCurrency(account?.currency ?? userCurrency)
     setBalanceDate(localDateString())
@@ -717,7 +713,7 @@ function AccountDialog({
           key={account?.id ?? 'new'}
           onSubmit={(e) => {
             e.preventDefault()
-            const isCC = type === 'credit_card'
+            const isCC = hasBillingCycle(type)
             const parseDay = (v: string) => {
               const n = parseInt(v, 10)
               return Number.isFinite(n) && n >= 1 && n <= 31 ? n : null
@@ -759,8 +755,8 @@ function AccountDialog({
                 value={type}
                 onChange={(e) => setType(e.target.value)}
               >
-                {ACCOUNT_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
+                {ACCOUNT_TYPES.map((o) => (
+                  <option key={o.key} value={o.key}>{t(o.labelKey)}</option>
                 ))}
               </select>
               <p className="text-xs text-muted-foreground">{t('accounts.typeOverrideHint')}</p>
@@ -776,8 +772,8 @@ function AccountDialog({
                     value={type}
                     onChange={(e) => setType(e.target.value)}
                   >
-                    {ACCOUNT_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
+                    {ACCOUNT_TYPES.map((o) => (
+                      <option key={o.key} value={o.key}>{t(o.labelKey)}</option>
                     ))}
                   </select>
                 </div>
@@ -796,15 +792,11 @@ function AccountDialog({
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>
-                    {type === 'credit_card'
-                      ? t('accounts.balanceCreditCard')
-                      : t('accounts.balance')}
-                  </Label>
+                  <Label>{t(getAccountTypeSpec(type).balanceLabelKey)}</Label>
                   <Input
                     type="number"
                     step="0.01"
-                    min={type === 'credit_card' ? '0' : undefined}
+                    min={isLiabilityType(type) ? '0' : undefined}
                     value={balance}
                     onChange={(e) => setBalance(e.target.value)}
                   />
@@ -818,14 +810,14 @@ function AccountDialog({
                   />
                 </div>
               </div>
-              {type === 'credit_card' && (
+              {getAccountTypeSpec(type).balanceHintKey && (
                 <p className="text-xs text-muted-foreground -mt-2">
-                  {t('accounts.balanceCreditCardHint')}
+                  {t(getAccountTypeSpec(type).balanceHintKey!)}
                 </p>
               )}
             </>
           )}
-          {type === 'credit_card' && (
+          {hasBillingCycle(type) && (
             <div className="space-y-4 rounded-lg border border-border bg-muted/30 p-4">
               <div className="space-y-2">
                 <Label>{t('accounts.creditLimit')}</Label>

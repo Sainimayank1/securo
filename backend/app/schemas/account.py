@@ -3,7 +3,24 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from app.core.account_types import ACCOUNT_TYPE_KEYS
+
+
+def _check_account_type(value: Optional[str]) -> Optional[str]:
+    """Reject types the registry doesn't know about.
+
+    Validated on the way in only — `AccountRead.type` stays a plain `str`,
+    because the column is free-form and predates the registry, so a database
+    written by an older build may hold a value this one has never heard of.
+    Refusing to *serialize* those would break the accounts list; refusing to
+    *accept* a new one turns a typo into a 422 instead of an account that
+    silently renders as checking.
+    """
+    if value is not None and value not in ACCOUNT_TYPE_KEYS:
+        raise ValueError(f"type must be one of: {', '.join(ACCOUNT_TYPE_KEYS)}")
+    return value
 
 
 class AccountBase(BaseModel):
@@ -26,6 +43,8 @@ class AccountCreate(BaseModel):
     card_brand: Optional[str] = None
     card_level: Optional[str] = None
 
+    _validate_type = field_validator("type")(_check_account_type)
+
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
@@ -39,6 +58,8 @@ class AccountUpdate(BaseModel):
     minimum_payment: Optional[Decimal] = None
     card_brand: Optional[str] = None
     card_level: Optional[str] = None
+
+    _validate_type = field_validator("type")(_check_account_type)
 
 
 class AccountRead(AccountBase):
