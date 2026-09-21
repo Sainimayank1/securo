@@ -1,0 +1,4 @@
+date,description,amount,currency,fx_rate
+2026-09-03,EXAMPLE MERCHANT,-5000.00,INR,1
+2026-09-04,EXAMPLE SALARY,101965.00,INR,1
+not-a-date,BROKEN ROW,-10.00,INR,1

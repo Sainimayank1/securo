@@ -7,6 +7,7 @@ import warnings
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from decimal import Decimal
+from typing import Collection
 
 from bs4 import XMLParsedAsHTMLWarning
 from ofxparse import OfxParser
@@ -705,6 +706,69 @@ async def enrich_with_category_suggestions(
     return transactions
 
 
+async def find_duplicate(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    txn_data: TransactionImport,
+    *,
+    exclude_ids: Collection[uuid.UUID] = (),
+) -> Transaction | None:
+    """The transaction already on this account that `txn_data` would repeat.
+
+    Prefer an external ID (OFX FITID), with date retained because some
+    Brazilian cards reuse one purchase FITID across monthly installments.
+    Formats without unique IDs fall back to transaction fields; compare
+    both descriptions because rules may have changed the displayed one.
+
+    `exclude_ids` are rows already claimed earlier in the same batch, so a
+    statement listing the same charge twice matches two existing rows rather
+    than the same one twice.
+
+    Split out of `import_transactions` so the statement-import preview can
+    show what the import is going to skip without inventing a second, subtly
+    different idea of what counts as a duplicate.
+    """
+    if txn_data.external_id:
+        existing_statement = select(Transaction).where(
+            Transaction.account_id == account_id,
+            Transaction.external_id == txn_data.external_id,
+            Transaction.date == txn_data.date,
+        )
+    else:
+        existing_statement = select(Transaction).where(
+            Transaction.account_id == account_id,
+            Transaction.date == txn_data.date,
+            Transaction.amount == txn_data.amount,
+            Transaction.type == txn_data.type,
+            or_(
+                Transaction.description == txn_data.description,
+                Transaction.original_description == txn_data.description,
+            ),
+        )
+    # `.first()` rather than `.scalar_one_or_none()`: the dedup key can
+    # legitimately match more than one row (e.g. a prior sync/import race
+    # left a duplicate, or a bank reuses one FITID across statements),
+    # and we only need to know whether *any* match exists. Requiring
+    # exactly one would raise MultipleResultsFound and abort the import.
+    if exclude_ids and not txn_data.external_id:
+        existing_statement = existing_statement.where(
+            Transaction.id.not_in(exclude_ids)
+        )
+    existing = await session.execute(
+        existing_statement.order_by(Transaction.created_at, Transaction.id)
+    )
+    duplicate = existing.scalars().first()
+    if not duplicate:
+        duplicate = await find_unique_transaction_match(
+            session,
+            account_id,
+            txn_data,
+            {"sync"},
+            exclude_ids=exclude_ids,
+        )
+    return duplicate
+
+
 async def import_transactions(
     session: AsyncSession,
     workspace_id: uuid.UUID,
@@ -787,48 +851,9 @@ async def import_transactions(
         txn_currency = txn_data.currency or account_currency
 
         if should_detect_duplicates:
-            # Prefer an external ID (OFX FITID), with date retained because some
-            # Brazilian cards reuse one purchase FITID across monthly installments.
-            # Formats without unique IDs fall back to transaction fields; compare
-            # both descriptions because rules may have changed the displayed one.
-            if txn_data.external_id:
-                existing_statement = select(Transaction).where(
-                    Transaction.account_id == account_id,
-                    Transaction.external_id == txn_data.external_id,
-                    Transaction.date == txn_data.date,
-                )
-            else:
-                existing_statement = select(Transaction).where(
-                    Transaction.account_id == account_id,
-                    Transaction.date == txn_data.date,
-                    Transaction.amount == txn_data.amount,
-                    Transaction.type == txn_data.type,
-                    or_(
-                        Transaction.description == txn_data.description,
-                        Transaction.original_description == txn_data.description,
-                    ),
-                )
-            # `.first()` rather than `.scalar_one_or_none()`: the dedup key can
-            # legitimately match more than one row (e.g. a prior sync/import race
-            # left a duplicate, or a bank reuses one FITID across statements),
-            # and we only need to know whether *any* match exists. Requiring
-            # exactly one would raise MultipleResultsFound and abort the import.
-            if matched_existing_ids and not txn_data.external_id:
-                existing_statement = existing_statement.where(
-                    Transaction.id.not_in(matched_existing_ids)
-                )
-            existing = await session.execute(
-                existing_statement.order_by(Transaction.created_at, Transaction.id)
+            duplicate = await find_duplicate(
+                session, account_id, txn_data, exclude_ids=matched_existing_ids
             )
-            duplicate = existing.scalars().first()
-            if not duplicate:
-                duplicate = await find_unique_transaction_match(
-                    session,
-                    account_id,
-                    txn_data,
-                    {"sync"},
-                    exclude_ids=matched_existing_ids,
-                )
             if duplicate:
                 matched_existing_ids.add(duplicate.id)
                 skipped += 1

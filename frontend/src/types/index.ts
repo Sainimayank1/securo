@@ -589,6 +589,56 @@ export interface FailedRow {
   error_reason: string
 }
 
+/** Per-row findings from a statement import, parallel to `transactions`. */
+export interface StatementRow {
+  index: number
+  warnings: string[]
+  duplicate: boolean
+  source_row?: number | null
+  source_page?: number | null
+  running_balance?: string | number | null
+}
+
+export interface StatementAccountMatch {
+  /** Last four characters only; the full number never leaves the parser. */
+  masked_number?: string | null
+  currency?: string | null
+  account_type?: string | null
+  institution?: string | null
+  suggested_account_id?: string | null
+  candidate_account_ids: string[]
+}
+
+export interface StatementBalanceCheck {
+  opening?: string | number | null
+  total?: string | number | null
+  expected_closing?: string | number | null
+  statement_closing?: string | number | null
+  difference?: string | number | null
+  matches?: boolean | null
+}
+
+export interface StatementWarning {
+  code: string
+  row?: number | null
+  detail: string
+}
+
+export interface StatementImportPreview {
+  supported: boolean
+  detected_format: string
+  provider: string
+  statement_type: string
+  confidence: number
+  account: StatementAccountMatch
+  period: { start?: string | null; end?: string | null }
+  transactions: ImportPreviewTransaction[]
+  rows: StatementRow[]
+  warnings: StatementWarning[]
+  balance: StatementBalanceCheck
+  duplicate_count: number
+}
+
 export interface RecurringTransaction {
   id: string
   user_id: string
