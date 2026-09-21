@@ -51,8 +51,8 @@ function preview(overrides: Partial<StatementImportPreview> = {}): StatementImpo
     },
     period: { start: '2026-09-01', end: '2026-09-14' },
     transactions: [
-      { description: 'WDL TFR UPI/DR/624442236850', amount: '2500.00', date: '2026-09-01', type: 'debit', currency: 'INR' },
-      { description: 'DEP TFR UPI/CR/661290123852', amount: '15000.00', date: '2026-09-03', type: 'credit', currency: 'INR' },
+      { description: 'WDL TFR UPI/DR/624442236850', amount: 2500.00, date: '2026-09-01', type: 'debit', currency: 'INR' },
+      { description: 'DEP TFR UPI/CR/661290123852', amount: 15000.00, date: '2026-09-03', type: 'credit', currency: 'INR' },
     ],
     rows: [
       { index: 0, warnings: [], duplicate: false, source_row: 19 },
