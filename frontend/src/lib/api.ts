@@ -43,6 +43,7 @@ import type {
   ImportLog,
   ImportPreviewTransaction,
   FailedRow,
+  StatementImportPreview,
   PayeeTaxId,
   TaxIdKindOption,
   Workspace,
@@ -658,6 +659,23 @@ export const transactions = {
       formData.append('column_mapping', JSON.stringify(options.column_mapping))
     }
     const { data } = await api.post('/transactions/import/preview', formData)
+    return data
+  },
+  /** Parse a bank statement (PDF/CSV/XLS/XLSX) without importing anything.
+   *
+   * Returns rows shaped exactly like `previewImport`'s, so the result is
+   * posted back through `import` below — the statement pipeline sits in front
+   * of the existing importer rather than beside it.
+   */
+  previewStatementImport: async (
+    file: File,
+    options?: { password?: string; account_id?: string },
+  ): Promise<StatementImportPreview> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (options?.password) formData.append('password', options.password)
+    if (options?.account_id) formData.append('account_id', options.account_id)
+    const { data } = await api.post('/transactions/import/statement/preview', formData)
     return data
   },
   import: async (

@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # of any of them.
     storage_max_attachments_per_invoice: int = 20
 
+    # Statement import. Separate from the attachment limit on purpose: an
+    # uploaded statement is parsed and discarded, never stored, so the two
+    # numbers answer different questions and should move independently.
+    statement_import_max_file_size_mb: int = 10
+
     # S3 Storage (for future use)
     storage_s3_bucket: str = ""
     storage_s3_region: str = ""

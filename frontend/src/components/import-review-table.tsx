@@ -29,8 +29,14 @@ function formatLocalDate(date: string, locale: string) {
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString(locale)
 }
 
+/** What the statement pipeline found about a row, keyed by its `_id`.
+ *  Absent for the standard CSV import, which renders exactly as before. */
+export type RowFindings = Record<string, { warnings: string[]; duplicate: boolean }>
+
 interface ImportReviewTableProps {
   transactions: ImportReviewTransaction[]
+  /** Optional: warning and duplicate badges beside the include/exclude state. */
+  rowFindings?: RowFindings
   categories: Category[]
   groups: CategoryGroup[]
   userCurrency: string
@@ -52,6 +58,7 @@ interface ImportReviewTableProps {
 
 export function ImportReviewTable({
   transactions,
+  rowFindings,
   categories,
   groups,
   userCurrency,
@@ -158,7 +165,7 @@ export function ImportReviewTable({
               <TableHead className="text-xs font-medium text-muted-foreground py-3 w-[160px]">
                 {t('import.category')}
               </TableHead>
-              <TableHead className="text-xs font-medium text-muted-foreground py-3 pr-4 w-[90px]">
+              <TableHead className="text-xs font-medium text-muted-foreground py-3 pr-4 w-[90px] whitespace-nowrap">
                 {t('transactions.status')}
               </TableHead>
             </TableRow>
@@ -201,15 +208,30 @@ export function ImportReviewTable({
                     />
                   </TableCell>
                   <TableCell className="py-2.5 pr-4">
-                    {tx.excluded ? (
-                      <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
-                        {t('import.excluded')}
-                      </span>
-                    ) : (
-                      <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">
-                        {t('import.included')}
-                      </span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {tx.excluded ? (
+                        <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
+                          {t('import.excluded')}
+                        </span>
+                      ) : rowFindings?.[tx._id]?.duplicate ? (
+                        <span className="text-xs bg-sky-50 text-sky-700 px-2 py-0.5 rounded">
+                          {t('statementImport.warnings.duplicate')}
+                        </span>
+                      ) : (
+                        <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">
+                          {t('import.included')}
+                        </span>
+                      )}
+                      {rowFindings?.[tx._id]?.warnings.map((code) => (
+                        <span
+                          key={code}
+                          className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded"
+                          title={t(`statementImport.warnings.${code}`)}
+                        >
+                          {t(`statementImport.warnings.${code}`)}
+                        </span>
+                      ))}
+                    </div>
                   </TableCell>
                 </TableRow>
               )

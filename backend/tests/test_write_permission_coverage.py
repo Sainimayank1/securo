@@ -72,6 +72,10 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("DELETE", "/api/workspaces/{workspace_id}/members/{member_user_id}"): "owner floor inside the handler",
     # Deliberate: a POST that persists nothing. See the comment on the route.
     ("POST", "/api/transactions/import/preview"): "parses an upload and returns a preview; writes nothing",
+    # The same, for a bank's own statement: it parses the upload, reports what
+    # would be imported, and posts nothing. The rows it returns are then sent
+    # to POST /api/transactions/import, which *is* write-gated.
+    ("POST", "/api/transactions/import/statement/preview"): "parses an upload and returns a preview; writes nothing",
     # Same shape for investment orders: the upload has to be a body, and the
     # dry run only reports what an import would do.
     ("POST", "/api/assets/import/preview"): "parses an upload and returns a preview; writes nothing",

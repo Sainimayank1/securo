@@ -1,0 +1,34 @@
+Name :- TEST CUSTOMER
+Joint Holder :- -
+1 EXAMPLE ROAD,EXAMPLE TOWN (000),EXAMPLETOWN
+EXAMPLEDISTRICT
+EXAMPLEDISTRICT-000000
+EXAMPLESTATE-INDIA
+Currency :- INR
+Customer ID :- 000000000
+IFSC Code :- UTIB0000000
+MICR Code :- 000000000
+Nominee Registered :- Y
+Registered Mobile No :- XXXXXX0000
+Registered Email ID :- teXXXX00@example.invalid
+PAN :- XXXXX0000X
+CKYC NUMBER :- XXXXXXXXXX0000
+
+Statement of Account No - 000000000003852 for the period (From : 01-09-2026  To : 04-09-2026) 
+
+Tran Date,CHQNO,PARTICULARS,DR,CR,BAL,SOL
+03-09-2026,-,NEFT/IN22624606343453/EXAMPLE EMPLOYER LLP/EXAMPLE BANK LIMITED/EXAMPLE EMPLOYER LLP,            101965.00, ,           107774.02,248
+03-09-2026,-,UPI/P2M/661299139693/EXAMPLE MERCHANT      /Pay/EXAMPLE PAYMENTS BANK, ,              5000.00,           102774.02,3829
+03-09-2026,-,NEFT/MB/AXOMB24602156233/TEST CUSTOMER/EXAMPLE NATIONAL BANK/Others, ,             16000.00,            86774.02,3829
+03-09-2026,-,UPI/P2A/624662362685/EXAMPLE PAYER/UTIB/UPI/,                81.67, ,            86855.69,3829
+04-09-2026,-,UPI/P2A/624734589967/TEST CUSTOMER        /UPI/EXAMPLE STATE BANK, ,             60000.00,            26855.69,3829
+
+Unless the constituent notifies the bank immediately of any discrepancy found by him/her in this statement of Account, it will be taken that he/she has found the account correct.
+
+REGISTERED OFFICE - AXIS BANK LTD, EXAMPLE ADDRESS, EXAMPLE CITY. 000000.
+
+Legends : 
+CWDR-Cash Withdrawal through ATM
+PUR-POS purchase
+
+This is a system generated output and requires no signature.

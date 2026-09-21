@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -11,8 +12,19 @@ from app.core.workspace_context import (
     current_workspace,
     current_writable_workspace,
 )
+from app.core.config import get_settings
+from app.schemas.statement_import import (
+    StatementAccountMatch,
+    StatementBalanceCheck,
+    StatementImportPreview,
+    StatementPeriodRead,
+    StatementRow,
+    StatementWarningRead,
+)
 from app.schemas.transaction import TransactionImportPreview, TransactionImportRequest
 from app.services import account_service, import_service
+from app.services.statement_import import service as statement_service
+from app.services.statement_import.readers import StatementReadError
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +157,133 @@ async def preview_import(
         csv_columns=csv_columns,
         parse_error=parse_error,
         failed_rows=failed_rows,
+    )
+
+
+@router.post("/import/statement/preview", response_model=StatementImportPreview)
+async def preview_statement_import(
+    file: UploadFile = File(...),
+    #: Only for password-protected workbooks. Used in memory to decrypt, then
+    #: dropped: never stored, never logged, never echoed back.
+    password: Optional[str] = Form(None),
+    #: The account the user has selected, if any. Duplicate detection needs a
+    #: target to compare against; without one the preview simply reports none.
+    account_id: Optional[str] = Form(None),
+    # Read-gated for the same reason `preview_import` above is: this is a POST
+    # because it carries a file, not because it changes anything. It parses the
+    # upload and reports what *would* be imported. The write gate lives on
+    # `POST /import`, which is the endpoint this preview's rows are posted to.
+    ctx: WorkspaceContext = Depends(current_workspace),
+    session: AsyncSession = Depends(get_async_session),
+):
+    settings = get_settings()
+    content = await file.read()
+    max_bytes = settings.statement_import_max_file_size_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"File too large. Maximum size is "
+                f"{settings.statement_import_max_file_size_mb} MB."
+            ),
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty"
+        )
+
+    target_account_id = None
+    if account_id:
+        try:
+            target_account_id = uuid.UUID(account_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid account_id"
+            )
+        # Resolved against the workspace before it is used, so the duplicate
+        # report can never describe another tenant's transactions.
+        if not await account_service.get_account(
+            session, target_account_id, ctx.workspace.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Account not found"
+            )
+
+    try:
+        result = await statement_service.preview(
+            session,
+            ctx.workspace.id,
+            file.filename or "",
+            content,
+            password=password,
+            account_id=target_account_id,
+            default_currency=settings.default_currency,
+        )
+    except StatementReadError as exc:
+        # A refusal the user can act on (wrong password, malformed archive),
+        # reported by code so the UI can translate it.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=exc.code
+        )
+    except Exception:
+        # Nothing about the file itself is logged: a bank statement's bytes,
+        # its name and its contents are all account-identifying.
+        logger.exception("Statement import preview failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to parse file"
+        )
+
+    statement = result.statement
+    logger.info(
+        "Statement preview parsed: provider=%s, format=%s, transactions=%d, duplicates=%d",
+        statement.detection.provider,
+        statement.detection.file_format,
+        len(result.transactions),
+        len(result.duplicate_indexes),
+    )
+
+    return StatementImportPreview(
+        supported=statement.detection.supported,
+        detected_format=statement.detection.file_format,
+        provider=statement.detection.provider,
+        statement_type=statement.detection.statement_type,
+        confidence=statement.detection.confidence,
+        account=StatementAccountMatch(
+            masked_number=statement.account.masked_number,
+            currency=statement.account.currency,
+            account_type=statement.account.account_type,
+            institution=statement.account.institution,
+            suggested_account_id=result.suggested_account_id,
+            candidate_account_ids=result.candidate_account_ids,
+        ),
+        period=StatementPeriodRead(
+            start=statement.period.start, end=statement.period.end
+        ),
+        transactions=result.transactions,
+        rows=[
+            StatementRow(
+                index=index,
+                warnings=row.warnings,
+                duplicate=index in result.duplicate_indexes,
+                source_row=row.source_row,
+                source_page=row.source_page,
+                running_balance=row.running_balance,
+            )
+            for index, row in enumerate(statement.transactions)
+        ],
+        warnings=[
+            StatementWarningRead(code=w.code, row=w.row, detail=w.detail)
+            for w in statement.warnings
+        ],
+        balance=StatementBalanceCheck(
+            opening=statement.balance.opening,
+            total=statement.balance.total,
+            expected_closing=statement.balance.expected_closing,
+            statement_closing=statement.balance.statement_closing,
+            difference=statement.balance.difference,
+            matches=statement.balance.matches,
+        ),
+        duplicate_count=len(result.duplicate_indexes),
     )
 
 

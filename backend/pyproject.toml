@@ -40,6 +40,16 @@ dependencies = [
     # legacy ZipCrypto scheme and cannot write an encrypted archive at all,
     # so AES-256 zips need this fork of it.
     "pyzipper>=0.4.0",
+    # Statement import: bank spreadsheets. All three are pure-Python wheels with
+    # no native libraries, the same bar the rest of this list is held to.
+    # openpyxl reads .xlsx (the stdlib has no OOXML reader); xlrd 2.x reads the
+    # legacy BIFF .xls that several Indian banks still export. msoffcrypto-tool
+    # decrypts the password-protected workbooks SBI mails out — it reuses the
+    # `cryptography` package already pinned above and is only imported when a
+    # file turns out to be an encrypted OLE2 container.
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
+    "msoffcrypto-tool>=5.4.0",
     # Bundled multilingual embedder — only imported on demand by the
     # agents knowledge-base path. ONNX runtime, ~120 MB model downloaded
     # on first use to /app/data/embedding_models. Users not on the
