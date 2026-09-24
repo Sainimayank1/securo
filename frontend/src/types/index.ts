@@ -56,6 +56,9 @@ export interface Workspace {
   is_archived: boolean
   default_currency: string
   locale: string | null
+  /** The calendar this workspace keeps its books in, or null to follow the
+   *  application timezone. */
+  timezone: string | null
   /** Where the workspace files. Selects the fiscal document pack; never the
    *  interface language. */
   tax_jurisdiction: string | null
@@ -81,7 +84,6 @@ export interface WorkspaceMember {
 export interface UserPreferences {
   language?: string
   date_format?: string
-  timezone?: string
   currency_display?: string
   display_name?: string
   onboarding_completed?: boolean
@@ -549,6 +551,8 @@ export interface ImportLog {
   /** Null for an order import, which lands on holdings rather than an account. */
   account_id: string | null
   account_name: string | null
+  /** Currency of the totals; null when the import has no account. */
+  account_currency: string | null
   entity: 'transactions' | 'asset_orders'
   filename: string
   format: string
@@ -1217,9 +1221,111 @@ export interface Invoice {
   /** Present once a shareable link exists. Null until someone asks for
    *  one, and null again once revoked. */
   share_token: string | null
+  /** Which agreement and period this invoice answers for, when it was
+   *  born from or linked to one. Provenance only: nothing about the
+   *  money reads these. */
+  schedule_id: string | null
+  schedule: { id: string; name: string; frequency: InvoiceScheduleFrequency; status: InvoiceScheduleStatus } | null
+  sequence: number | null
+  period_start: string | null
+  period_end: string | null
   lines: InvoiceLine[]
   allocations: InvoiceAllocation[]
   created_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Recurring invoices
+// ---------------------------------------------------------------------------
+
+/** Decisions a person took about an agreement. `past_due` is not one of
+ *  them: it is derived from the agreement's invoices. */
+export type InvoiceScheduleStatus = 'active' | 'paused' | 'ended'
+export type InvoiceScheduleFrequency =
+  | 'weekly'
+  | 'biweekly'
+  | 'monthly'
+  | 'quarterly'
+  | 'semiannual'
+  | 'yearly'
+export type InvoiceScheduleEndType = 'never' | 'on_date' | 'after_count'
+export type InvoiceScheduleEndReason =
+  | 'canceled_by_client'
+  | 'canceled_by_us'
+  | 'completed'
+  | 'unpaid'
+  | 'other'
+
+/** What the agreement says from a date on. One row per price change. */
+export interface InvoiceScheduleTerm {
+  id: string
+  effective_from: string
+  lines: InvoiceLineInput[]
+  discount: string
+  subtotal: string
+  tax_total: string
+  total: string
+  created_at: string
+}
+
+export interface InvoiceSchedule {
+  id: string
+  name: string
+  payee_id: string | null
+  payee: { id: string; name: string } | null
+  origin: string
+  external_source: string | null
+  external_id: string | null
+  status: InvoiceScheduleStatus
+  pause_reason: 'manual' | 'failures' | null
+  ended_at: string | null
+  end_reason: InvoiceScheduleEndReason | null
+  frequency: InvoiceScheduleFrequency
+  start_date: string
+  end_type: InvoiceScheduleEndType
+  end_date: string | null
+  end_count: number | null
+  payment_terms_days: number | null
+  currency: string
+  notes: string | null
+  custom_fields: Record<string, string> | null
+  next_sequence: number
+  last_generated_at: string | null
+  consecutive_failures: number
+  terms: InvoiceScheduleTerm[]
+  created_at: string
+  /** Derived by the server on every read; never stored. */
+  current_term: InvoiceScheduleTerm | null
+  next_term: InvoiceScheduleTerm | null
+  monthly_amount: string
+  next_period_start: string | null
+  invoice_count: number
+  amount_invoiced: string
+  amount_paid: string
+  past_due_count: number
+}
+
+export interface InvoiceScheduleCurrencySummary {
+  currency: string
+  monthly_recurring: string
+  active_count: number
+  ended_recently_count: number
+  monthly_lost: string
+  past_due_count: number
+}
+
+export interface InvoiceScheduleSummary {
+  active_count: number
+  paused_count: number
+  ended_count: number
+  by_currency: InvoiceScheduleCurrencySummary[]
+}
+
+export interface InvoiceSchedulePeriod {
+  sequence: number
+  period_start: string
+  period_end: string
+  taken: boolean
 }
 
 export interface InvoiceAgingBuckets {
@@ -1436,6 +1542,23 @@ export interface ReconciliationConditions {
     foreign?: boolean
   }
   same_account?: boolean
+  /** The defining condition of a transfer: the two legs are on different
+   *  accounts. The inverse of `same_account`, and its own key so a rule
+   *  reads as a list of things that must be true. */
+  different_account?: boolean
+  /** Only pairs where one of the two legs sits on an account of this
+   *  kind. Either leg is enough: a rule that exists to be careful about
+   *  credit cards has to fire whichever end the card is on. */
+  account_types?: ('checking' | 'savings' | 'credit_card' | 'investment' | 'wallet')[]
+  /** One side's statement text has to name the other side's account. The
+   *  signal that tells two same-day transfers of the same amount apart,
+   *  when one line reads "To FORTUNEO ACCOUNT" and the other does not. */
+  account_name_in_description?: boolean
+  /** How to separate candidates that all fit. `closest_date` takes the
+   *  nearest in time and only gives up when nothing separates them, which
+   *  is different from `unique_candidate` refusing whenever there is more
+   *  than one. */
+  tie_break?: 'closest_date'
   unique_candidate?: boolean
 }
 
@@ -1519,7 +1642,7 @@ export interface ReconciliationSuggestion {
   id: string
   node: string
   strategy_id: string
-  expectation_kind: 'invoice' | 'recurring'
+  expectation_kind: 'invoice' | 'recurring' | 'transaction'
   expectation_id: string
   expectation_label?: string | null
   amount: string
@@ -1539,7 +1662,7 @@ export interface ReconciliationSuggestion {
    *  case; several when one payment is offered against several invoices,
    *  which is answered whole or not at all. */
   covers: {
-    expectation_kind: 'invoice' | 'recurring'
+    expectation_kind: 'invoice' | 'recurring' | 'transaction'
     expectation_id: string
     label?: string | null
     amount: string
@@ -1551,6 +1674,10 @@ export interface ReconciliationSuggestion {
     currency?: string | null
     date: string
     type: string
+    /** Which account the money moved on. With transfers in the queue the
+     *  question is about accounts, so a row naming only the other side
+     *  leaves the reader to work out which of theirs this one is. */
+    account_id?: string | null
   } | null
 }
 
@@ -1564,7 +1691,7 @@ export interface ReconciliationHistoryEvent {
   id: string
   at: string
   action: 'linked' | 'suggested' | 'accepted' | 'declined' | 'expired' | 'unlinked'
-  expectation_kind: 'invoice' | 'recurring'
+  expectation_kind: 'invoice' | 'recurring' | 'transaction'
   expectation_id: string
   expectation_label?: string | null
   amount: string
